@@ -660,5 +660,9 @@ class TestConverter(TestCase):
         # self._check_equal_ts_ep_converter(func6, inp)
 
 
+    def test_convert_func_without_param(self):
+        pass
+
+
 if __name__ == "__main__":
     run_tests()
