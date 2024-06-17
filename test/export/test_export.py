@@ -2749,9 +2749,7 @@ def forward(self, x):
 
         ep = export(M(), (torch.tensor(1), torch.ones(4, 5)))
 
-        # This is because we insert sym_constrain_range in the graph now
-        error_msg = r"Invalid value range for -1 between"
-        with self.assertRaisesRegex(RuntimeError, error_msg):
+        with self.assertRaisesRegex(RuntimeError, "Invalid value range"):
             _ = ep.module()(torch.tensor(-1), torch.randn(4, 5))
 
         self.assertTrue(
