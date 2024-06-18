@@ -8,6 +8,7 @@ import time
 import warnings
 from contextlib import contextmanager, nullcontext
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
+from unittest.mock import patch
 
 import torch
 import torch._dynamo
@@ -43,7 +44,9 @@ from torch._functorch.aot_autograd import aot_export_module
 from torch._guards import detect_fake_mode
 
 from torch._library.fake_class_registry import FakeScriptObject
+from torch._ops import OpOverload
 from torch._subclasses.fake_tensor import FakeTensor, FakeTensorMode
+from torch._subclasses.functional_tensor import FunctionalTensor
 from torch._utils_internal import log_export_usage
 from torch.export.dynamic_shapes import _combine_args
 from torch.export.exported_program import OutputKind
@@ -128,6 +131,26 @@ DEFAULT_EXPORT_DYNAMO_CONFIG.reorderable_logging_functions = {
     print,
     warnings.warn,
 }
+
+
+COMPOSITE_OPS_THAT_CAN_BE_PRESERVED = [
+    # torch.ops.aten.batch_norm.default,
+    # torch.ops.aten.broadcast_to.default,
+    # torch.ops.aten.chunk.default,
+    torch.ops.aten.conv_transpose1d.default,
+    torch.ops.aten.conv_transpose2d.input,
+    torch.ops.aten.conv_transpose3d.input,
+    torch.ops.aten.conv1d.default,
+    torch.ops.aten.conv2d.default,
+    torch.ops.aten.conv3d.default,
+    # torch.ops.aten.flatten.using_ints,
+    torch.ops.aten.linear.default,
+    # torch.ops.aten.reshape.default,
+    # torch.ops.aten.sym_numel.default,  These are all aten ops that correspond to metadata queries
+    torch.ops.aten.sym_size.int,
+    # torch.ops.aten.sym_storage_offset.default,  These are all aten ops that correspond to metadata queries
+    torch.ops.aten.sym_stride.int,
+]
 
 
 @contextmanager
@@ -223,6 +246,78 @@ def _convert_input_to_fake(gm, args, kwargs):
         params_buffers,
     )
     return fake_args, fake_kwargs, fake_params_buffers, fake_mode
+
+
+def _skip_autograd_kernel(*args, **kwargs):
+    kernel = kwargs["kernel"]
+    del kwargs["kernel"]
+    with torch._C._AutoDispatchBelowAutograd():
+        return kernel(*args, **kwargs)
+
+
+@contextmanager
+def override_composite_implicit_decomp(ops_to_preserve):
+    # This function overrides CompositeImplicitAutograd decomp for
+    # functional composite ops. Ideally we want to not-decompose
+    # ALL composite ops but today's C++ functinalization relies on
+    # the fact that it is working with the opset after decomp is run.
+    # Hence we can only do it for functional ops. One caveat is that
+    # there are some composite ops that lie about their schema (claimed to be
+    # functional but not really aka dropout), for these cases, we just decompose.
+    saved_tables = {}
+    patched_ops = set()
+    for op_overload in ops_to_preserve:
+
+        def can_preserve(op_overload):
+            if op_overload in FunctionalTensor.maybe_aliasing_or_mutating_ops:
+                return False
+            if op_overload in FunctionalTensor.metadata_fns:
+                return False
+
+            alias_info = len(
+                [i for i in op_overload._schema.arguments if i.alias_info is not None]
+            )
+
+            is_mutating_or_aliasing = alias_info != 0 or op_overload._schema.is_mutable
+
+            if is_mutating_or_aliasing:
+                return False
+
+            if not torch._C._dispatch_has_kernel(op_overload.name()):
+                return False
+
+            if not torch._C._dispatch_has_kernel_for_dispatch_key(
+                op_overload.name(), torch._C.DispatchKey.CompositeImplicitAutograd
+            ):
+                return False
+
+            return True
+
+        if not can_preserve(op_overload):
+            warnings.warn(
+                f"We can't preserve {op_overload} in export because this op is unsafe to keep"
+            )
+            continue
+
+        saved_tables[op_overload] = op_overload.py_kernels.copy()
+        patched_ops.add(op_overload)
+        for override_dispatch_key in [
+            torch._C.DispatchKey.AutogradCPU,
+            torch._C.DispatchKey.AutogradCUDA,
+            torch._C.DispatchKey.AutogradMeta,
+        ]:
+            if override_dispatch_key not in op_overload.py_kernels:
+                # conv1d, conv2d, conv3d don't work with default Autograd key
+                op_overload.py_impl(override_dispatch_key)(
+                    functools.partial(_skip_autograd_kernel, kernel=op_overload)
+                )
+    try:
+        yield patched_ops
+    finally:
+        for op in patched_ops:
+            op.py_kernels.clear()
+            op.py_kernels.update(saved_tables[op])
+            op._dispatch_cache.clear()
 
 
 def _replace_param_buffer_names(param_buffer_table, sig):
@@ -1380,6 +1475,7 @@ def _export(
     _allow_complex_guards_as_runtime_asserts: bool = False,
     _disable_forced_specializations: Optional[bool] = False,
     _is_torch_jit_trace: bool = False,
+    _preserve_ops: Optional[List[OpOverload]] = None,
 ) -> ExportedProgram:
     """
     Traces either an nn.Module's forward function or just a callable with PyTorch
@@ -1449,7 +1545,11 @@ def _export(
     flags = set()
     flags.add("strict" if strict else "non_strict")
     flags.add("pre_dispatch" if pre_dispatch else "aot_dispatch")
-    log_export_usage(event="export.enter", flags=flags)
+    log_export_usage(
+        event="export.enter",
+        preserved_ops=_preserve_ops if _preserve_ops else [],
+        flags=flags,
+    )
     _EXPORT_FLAGS = flags
 
     kwargs = kwargs or {}
@@ -1465,20 +1565,33 @@ def _export(
 
     # Call the appropriate export function based on the strictness of tracing.
     export_func = _strict_export if strict else _non_strict_export
-    export_artifact = export_func(
-        mod,
-        args,
-        kwargs,
-        dynamic_shapes,
-        preserve_module_call_signature,
-        pre_dispatch,
-        original_state_dict,
-        orig_in_spec,
-        _allow_complex_guards_as_runtime_asserts,
-        _disable_forced_specializations,
-        _is_torch_jit_trace,
-    )
 
+    # TODO we only want to do this for aot-dispatch for now. Pre-dispatch will be deleted soon
+    override_decomp = (
+        override_composite_implicit_decomp(_preserve_ops if _preserve_ops else [])
+        if not pre_dispatch
+        else nullcontext()
+    )
+    with override_decomp as patched_ops:
+        should_patch_ops = (
+            patch("torch._ops.OPS_THAT_SHOULDNT_GET_DECOMPOSED", patched_ops)  # type: ignore[attr-defined]
+            if patched_ops is not None
+            else nullcontext()
+        )
+        with should_patch_ops:  # type: ignore[attr-defined]
+            export_artifact = export_func(
+                mod,
+                args,
+                kwargs,
+                dynamic_shapes,
+                preserve_module_call_signature,
+                pre_dispatch,
+                original_state_dict,
+                orig_in_spec,
+                _allow_complex_guards_as_runtime_asserts,
+                _disable_forced_specializations,
+                _is_torch_jit_trace,
+            )
     # Decompose here for readability.
     gm = export_artifact.aten.gm
     export_graph_signature = export_artifact.aten.sig
