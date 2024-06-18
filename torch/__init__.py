@@ -22,8 +22,17 @@ import platform
 import sys
 import textwrap
 import threading
-import typing
-from typing import Any, Callable, Dict, Optional, Set, Tuple, TYPE_CHECKING, Union
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Optional,
+    Set,
+    Tuple,
+    Type as _Type,
+    TYPE_CHECKING,
+    Union,
+)
 from typing_extensions import TypeGuard
 
 
@@ -1067,7 +1076,7 @@ def set_default_device(
     _GLOBAL_DEVICE_CONTEXT.device_context = device_context
 
 
-def set_default_tensor_type(t: Union[typing.Type["torch.Tensor"], str], /) -> None:
+def set_default_tensor_type(t: Union[_Type["torch.Tensor"], str], /) -> None:
     r"""
     .. warning::
 
@@ -1856,7 +1865,7 @@ class QUInt2x4Storage(_LegacyStorage):
         return torch.quint2x4
 
 
-_storage_classes: Set[typing.Type[Union[TypedStorage, UntypedStorage]]] = {
+_storage_classes: Set[_Type[Union[TypedStorage, UntypedStorage]]] = {
     UntypedStorage,
     DoubleStorage,
     FloatStorage,
@@ -1879,7 +1888,7 @@ _storage_classes: Set[typing.Type[Union[TypedStorage, UntypedStorage]]] = {
 }
 
 # The _tensor_classes set is initialized by the call to initialize_python_bindings.
-_tensor_classes: Set[typing.Type["torch.Tensor"]] = set()
+_tensor_classes: Set[_Type["torch.Tensor"]] = set()
 
 # If you edit these imports, please update torch/__init__.py.in as well
 from torch import amp as amp, random as random, serialization as serialization
