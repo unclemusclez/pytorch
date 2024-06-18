@@ -22,7 +22,9 @@ import platform
 import sys
 import textwrap
 import threading
-from typing import Any, Callable, Dict, Optional, Set, Tuple, Type, TYPE_CHECKING, Union
+import typing
+from typing import Any, Callable, Dict, Optional, Set, Tuple, TYPE_CHECKING, Union
+from typing_extensions import TypeGuard
 
 
 # multipy/deploy is setting this import before importing torch, this is the most
@@ -433,14 +435,14 @@ class SymInt:
 
     def __floordiv__(self, other):
         if isinstance(other, (builtins.float, SymFloat)):
-            return torch.sym_float(math.floor(sym_float(self) / other))
+            return sym_float(math.floor(sym_float(self) / other))
         if not isinstance(other, (builtins.int, SymInt)):
             return NotImplemented
         return self.__int_floordiv__(other)
 
     def __rfloordiv__(self, other):
         if isinstance(other, (builtins.float, SymFloat)):
-            return torch.sym_float(math.floor(other / sym_float(self)))
+            return sym_float(math.floor(other / sym_float(self)))
         if not isinstance(other, (builtins.int, SymInt)):
             return NotImplemented
         return self.__rint_floordiv__(other)
@@ -570,12 +572,12 @@ class SymFloat:
     def __floordiv__(self, other):
         if not isinstance(other, (builtins.int, builtins.float, SymInt, SymFloat)):
             return NotImplemented
-        return torch.sym_float(math.floor(self / sym_float(other)))
+        return sym_float(math.floor(self / sym_float(other)))
 
     def __rfloordiv__(self, other):
         if not isinstance(other, (builtins.int, builtins.float, SymInt, SymFloat)):
             return NotImplemented
-        return torch.sym_float(math.floor(sym_float(other) / self))
+        return sym_float(math.floor(sym_float(other) / self))
 
     def __bool__(self):
         return self.node.bool_()
@@ -912,44 +914,48 @@ if not TYPE_CHECKING:
 ################################################################################
 
 
-def typename(o):
+def typename(obj: Any, /) -> str:
     """
     String representation of the type of an object.
 
     This function returns a fully qualified string representation of an object's type.
     Args:
-        o (Object): The object whose type to represent
+        obj (object): The object whose type to represent
     Returns:
         str: the type of the object `o`
     Example:
-        >>> x = torch.tensor([1,2,3])
+        >>> x = torch.tensor([1, 2, 3])
         >>> torch.typename(x)
         'torch.LongTensor'
+        >>> torch.typename(torch.nn.Parameter)
+        'torch.nn.parameter.Parameter'
+        >>> class Foo:
+        ...     def bar(self): ...
+        >>> torch.typename(Foo)
+        'Foo'
+        >>> torch.typename(Foo.bar)
+        'Foo.bar'
     """
-    if isinstance(o, torch.Tensor):
-        return o.type()
+    if isinstance(obj, torch.Tensor):
+        return obj.type()
 
-    module = ""
-    class_name = ""
-    if (
-        hasattr(o, "__module__")
-        and o.__module__ != "builtins"
-        and o.__module__ != "__builtin__"
-        and o.__module__ is not None
-    ):
-        module = o.__module__ + "."
+    module = getattr(obj, "__module__", "") or ""
+    qualname = ""
 
-    if hasattr(o, "__qualname__"):
-        class_name = o.__qualname__
-    elif hasattr(o, "__name__"):
-        class_name = o.__name__
+    if hasattr(obj, "__qualname__"):
+        qualname = obj.__qualname__
+    elif hasattr(obj, "__name__"):
+        qualname = obj.__name__
     else:
-        class_name = o.__class__.__name__
+        module = obj.__class__.__module__ or ""
+        qualname = obj.__class__.__qualname__
 
-    return module + class_name
+    if module in {"", "builtins", "__main__"}:
+        return qualname
+    return f"{module}.{qualname}"
 
 
-def is_tensor(obj):
+def is_tensor(obj: Any, /) -> TypeGuard["torch.Tensor"]:
     r"""Returns True if `obj` is a PyTorch tensor.
 
     Note that this function is simply doing ``isinstance(obj, Tensor)``.
@@ -958,7 +964,7 @@ def is_tensor(obj):
     ``is_tensor``.
 
     Args:
-        obj (Object): Object to test
+        obj (object): Object to test
     Example::
 
         >>> x = torch.tensor([1, 2, 3])
@@ -969,7 +975,7 @@ def is_tensor(obj):
     return isinstance(obj, torch.Tensor)
 
 
-def is_storage(obj):
+def is_storage(obj: Any, /) -> TypeGuard[Union["TypedStorage", "UntypedStorage"]]:
     r"""Returns True if `obj` is a PyTorch storage object.
 
     Args:
@@ -984,6 +990,7 @@ _GLOBAL_DEVICE_CONTEXT = threading.local()
 def get_default_device() -> "torch.device":
     r"""Gets the default ``torch.Tensor`` to be allocated on ``device``"""
     global _GLOBAL_DEVICE_CONTEXT
+
     if hasattr(_GLOBAL_DEVICE_CONTEXT, "device_context"):
         device = _GLOBAL_DEVICE_CONTEXT.device_context.device
         if device.index is not None:
@@ -996,7 +1003,9 @@ def get_default_device() -> "torch.device":
         return torch.device("cpu")
 
 
-def set_default_device(device):
+def set_default_device(
+    device: Optional[Union["torch.device", str, builtins.int]],
+) -> None:
     """Sets the default ``torch.Tensor`` to be allocated on ``device``.  This
     does not affect factory function calls which are called with an explicit
     ``device`` argument.  Factory calls will be performed as if they
@@ -1058,7 +1067,7 @@ def set_default_device(device):
     _GLOBAL_DEVICE_CONTEXT.device_context = device_context
 
 
-def set_default_tensor_type(t):
+def set_default_tensor_type(t: Union[typing.Type["torch.Tensor"], str], /) -> None:
     r"""
     .. warning::
 
@@ -1089,7 +1098,7 @@ def set_default_tensor_type(t):
     _C._set_default_tensor_type(t)
 
 
-def set_default_dtype(d):
+def set_default_dtype(d: "torch.dtype", /) -> None:
     r"""
 
     Sets the default floating point dtype to :attr:`d`. Supports floating point dtype
@@ -1358,7 +1367,7 @@ def get_deterministic_debug_mode() -> builtins.int:
         return 0
 
 
-def get_float32_matmul_precision() -> builtins.str:
+def get_float32_matmul_precision() -> str:
     r"""Returns the current value of float32 matrix multiplication precision. Refer to
     :func:`torch.set_float32_matmul_precision` documentation for more details.
     """
@@ -1431,7 +1440,7 @@ def set_float32_matmul_precision(precision: str) -> None:
     _C._set_float32_matmul_precision(precision)
 
 
-def set_warn_always(b: builtins.bool) -> None:
+def set_warn_always(b: builtins.bool, /) -> None:
     r"""When this flag is False (default) then some PyTorch warnings may only
     appear once per process. This helps avoid excessive warning information.
     Setting it to True causes these warnings to always appear, which may be
@@ -1464,7 +1473,7 @@ def _check_with(
     cond: Union[builtins.bool, SymBool],
     message: Callable[[], str],
 ):  # noqa: F811
-    if not isinstance(cond, (builtins.bool, torch.SymBool)):
+    if not isinstance(cond, (builtins.bool, SymBool)):
         raise TypeError(f"cond must be a bool, but got {type(cond)}")
 
     from torch.fx.experimental.symbolic_shapes import expect_true
@@ -1599,13 +1608,13 @@ def _check_not_implemented(cond, message=None):  # noqa: F811
 
 
 def _check_tensor_all_with(error_type, cond, message=None):  # noqa: F811
-    if not torch.is_tensor(cond):
+    if not is_tensor(cond):
         raise TypeError(f"cond must be a tensor, but got {type(cond)}")
 
     if not cond.dtype == torch.bool:
         raise TypeError(f"cond tensor must have dtype torch.bool, but got {cond.dtype}")
 
-    _check_with(error_type, cond._is_all_true().item(), message)
+    _check_with(error_type, cond._is_all_true().item(), message)  # type: ignore[arg-type]
 
 
 # C++ equivalent: `TORCH_CHECK_TENSOR_ALL`
@@ -1847,7 +1856,7 @@ class QUInt2x4Storage(_LegacyStorage):
         return torch.quint2x4
 
 
-_storage_classes = {
+_storage_classes: Set[typing.Type[Union[TypedStorage, UntypedStorage]]] = {
     UntypedStorage,
     DoubleStorage,
     FloatStorage,
@@ -1870,7 +1879,7 @@ _storage_classes = {
 }
 
 # The _tensor_classes set is initialized by the call to initialize_python_bindings.
-_tensor_classes: Set[Type] = set()
+_tensor_classes: Set[typing.Type["torch.Tensor"]] = set()
 
 # If you edit these imports, please update torch/__init__.py.in as well
 from torch import amp as amp, random as random, serialization as serialization
