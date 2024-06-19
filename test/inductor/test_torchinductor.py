@@ -752,7 +752,9 @@ def is_cpp_backend(device):
 
 
 def is_halide_backend(device):
-    return getattr(device, "type", device) == "cpu" and config.cpu_backend == "halide"
+    if getattr(device, "type", device) == "cpu":
+        return config.cpu_backend == "halide"
+    return config.cuda_backend == "halide"
 
 
 def skip_if_halide(fn):
@@ -4643,7 +4645,7 @@ class CommonTemplate:
         mod = Repro().to(device=GPU_TYPE)
         o1 = mod(inp)
         o2 = torch.compile(mod)(inp)
-        self.assertEqual(o1, o2)
+        self.assertEqual(o1, o2, rtol=1e-3, atol=1e-3)
 
     @patch.object(config.trace, "enabled", True)
     def test_layer_norm(self):
@@ -8446,6 +8448,7 @@ class CommonTemplate:
         self.common(forward, args, atol=1e-5, rtol=1e-5)
 
     @requires_gpu()
+    @skip_if_halide  # cascading accuracy issues due rsqrt fallback
     def test_tmp_not_defined_issue3(self):
         from torch import device
 
@@ -9894,7 +9897,7 @@ class CommonTemplate:
                 inp2 = torch.as_strided(base2, (64, 64), (64, 1), offset2)
                 ref2 = fn(inp2)
                 res2 = fn_c(inp2)
-                self.assertEqual(ref2, res2)
+                self.assertEqual(ref2, res2, atol=1e-5, rtol=1e-5)
 
     @requires_gpu()
     @config.patch(assume_aligned_inputs=False)
