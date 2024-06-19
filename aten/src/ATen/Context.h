@@ -384,12 +384,11 @@ class TORCH_API Context {
       c10::utils::check_env("TORCH_LINALG_PREFER_CUSOLVER") == true
       ? at::LinalgBackend::Cusolver
       : at::LinalgBackend::Default;
-  static at::BlasBackend getBlasAcceptableBackend(at::BlasBackend b);
   at::BlasBackend blas_preferred_backend =
       (c10::utils::check_env("TORCH_BLAS_PREFER_CUBLASLT") == true ||
        c10::utils::check_env("TORCH_BLAS_PREFER_HIPBLASLT") == true)
-      ? getBlasAcceptableBackend(at::BlasBackend::Cublaslt)
-      : getBlasAcceptableBackend(at::BlasBackend::Cublas);
+      ? at::BlasBackend::Cublaslt
+      : at::BlasBackend::Cublas;
 
 
 #ifdef C10_MOBILE
