@@ -314,6 +314,9 @@ _h100_default_config = {
     (torch.bfloat16, 64): (128, 64, 4, 3),
     (torch.bfloat16, 128): (64, 32, 4, 3),
     (torch.bfloat16, 256): (64, 32, 4, 3),
+    (torch.float16, 64): (128, 64, 4, 3),
+    (torch.float16, 128): (64, 32, 4, 3),
+    (torch.float16, 256): (64, 32, 4, 3),
 }
 
 _a100_default_config = {
@@ -321,8 +324,11 @@ _a100_default_config = {
     (torch.float32, 128): (128, 32, 4, 3),
     (torch.float32, 256): (64, 16, 4, 3),
     (torch.bfloat16, 64): (128, 64, 4, 3),
-    (torch.bfloat16, 128): (128, 32, 4, 3),
+    (torch.bfloat16, 128): (128, 128, 8, 2),
     (torch.bfloat16, 256): (32, 64, 4, 3),
+    (torch.float16, 64): (128, 64, 4, 3),
+    (torch.float16, 128): (128, 128, 8, 2),
+    (torch.float16, 256): (32, 64, 4, 3),
 }
 
 
@@ -358,10 +364,15 @@ def _get_default_config_bwd(query) -> Tuple[int, int, int, int]:
 
     if head_dim <= 256 and torch.cuda.get_device_capability() >= (9, 0):  # H100
         if dtype == torch.float32:
-            return (64, 64, 4, 1)
-        return (128, 128, 4, 3)
-    elif head_dim <= 256 and torch.cuda.get_device_capability() >= (8, 0):  # A100
-        return (64, 64, 4, 1)
+            return (32, 64, 4, 1)
+        return (32, 128, 4, 3)
+    elif torch.cuda.get_device_capability() >= (8, 0):  # A100
+        if head_dim == 64:
+            return (32, 128, 4, 3)
+        elif head_dim == 128:
+            return (64, 128, 8, 3)
+        else:
+            return (64, 64, 4, 2)
     else:  # modest hardware or extremely large head_dim
         return (16, 16, 4, 1)
 
@@ -561,7 +572,7 @@ flex_attention_backward_template = TritonTemplate(
         curr_n = start_n2
         num_steps = KV_LEN // BLOCK_N2
         for blk_idx in range(num_steps):
-            offs_n2= curr_n + tl.arange(0, BLOCK_N2)
+            offs_n2 = curr_n + tl.arange(0, BLOCK_N2)
             kT = tl.load(kT_ptrs)
             vT = tl.load(vT_ptrs)
             qk = tl.dot(q, kT)
@@ -691,8 +702,8 @@ flex_attention_backward_template = TritonTemplate(
         # Write back dK.
         index_n = offs_n1[:, None]
         index_k = offs_k[None, :]
-        # TODO generalize and add proper mask support
-        mask = (index_n != -1) & (index_k != -1)
+
+        mask = index_n <= KV_LEN
         {{store_output(("off_z", "off_h", "index_n", "index_k"), "dk", "mask", indent_width=8)}}
  """,
 )
@@ -764,9 +775,11 @@ def flex_attention_backward(*args, **kwargs):
     configs.append(_get_default_config_bwd(query))
     if config.max_autotune:
         for BLOCK1 in [32, 64]:
-            for BLOCK2 in [32, 64]:
+            for BLOCK2 in [32, 64, 128]:
+                if BLOCK2 % BLOCK1 != 0:
+                    continue
                 for w in [4, 8]:
-                    for s in [1, 3]:
+                    for s in [1, 3, 4, 5]:
                         configs.append((BLOCK1, BLOCK2, w, s))
 
     for BLOCK1, BLOCK2, num_warps, num_stages in configs:
@@ -790,9 +803,9 @@ def flex_attention_backward(*args, **kwargs):
             num_stages=num_stages,
             num_warps=num_warps,
             BLOCK_M1=BLOCK1,
-            BLOCK_N1=BLOCK1,
+            BLOCK_N1=BLOCK2,
             BLOCK_M2=BLOCK2,
-            BLOCK_N2=BLOCK2,
+            BLOCK_N2=BLOCK1,
             BLOCK_DMODEL=query.get_size()[-1],
             # For now, we always assume the "sound" option
             SCORE_MOD_IS_LINEAR=False,
