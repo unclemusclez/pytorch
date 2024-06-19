@@ -552,7 +552,21 @@ def compile_fx_inner(
     context = torch._guards.TracingContext.try_get()
     if context is not None and context.output_strides is not None:
         assert len(context.output_strides) == 0
-        context.output_strides.extend(compiled_graph.output_strides)
+        shape_env = _shape_env_from_inputs(example_inputs)
+        for exprs in compiled_graph.output_strides:
+            if exprs is None:
+                context.output_strides.append(None)
+            else:
+                context.output_strides.append(
+                    [
+                        (
+                            shape_env.evaluate_symexpr(e)
+                            if shape_env is not None
+                            else int(e)
+                        )
+                        for e in exprs
+                    ]
+                )
 
     if aot_mode:
         return compiled_graph
@@ -818,7 +832,7 @@ def fx_codegen_and_compile(
         metrics_helper = metrics.CachedMetricsHelper()
         with V.set_graph_handler(graph):
             graph.run(*example_inputs)
-            output_strides: List[Optional[Tuple[int, ...]]] = []
+            output_strides: List[Optional[Tuple[str, ...]]] = []
             if graph.graph_outputs is not None:
                 # We'll put the output strides in the compiled graph so we
                 # can later return them to the caller via TracingContext
@@ -827,11 +841,8 @@ def fx_codegen_and_compile(
                         hasattr(out, "layout")
                         and len(free_unbacked_symbols(out.layout.stride)) == 0
                     ):
-                        output_strides.append(
-                            tuple(
-                                V.graph.sizevars.size_hint(s) for s in out.layout.stride
-                            )
-                        )
+                        # Convert to string for eval on the load path
+                        output_strides.append(tuple(str(s) for s in out.layout.stride))
                     else:
                         output_strides.append(None)
 
