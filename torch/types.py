@@ -3,6 +3,7 @@ import builtins
 from typing import Any, List, Optional, Sequence, Tuple, TYPE_CHECKING, Union
 
 import torch
+from torch import SymInt
 
 
 if TYPE_CHECKING:
@@ -33,6 +34,7 @@ _dtype = torch.dtype
 _device = torch.device
 _qscheme = torch.qscheme
 _size = Union[torch.Size, List[_int], Tuple[_int, ...]]
+_symsize = Union[torch.Size, Sequence[Union[_int, SymInt]]]
 _layout = torch.layout
 _dispatchkey = Union[str, torch._C.DispatchKey]
 

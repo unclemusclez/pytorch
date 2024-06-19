@@ -3,7 +3,8 @@ import contextlib
 
 import warnings
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Set, Union
+from typing import Any, Dict, List, Optional, Set, Union, Protocol, Tuple, Sequence
+from typing_extensions import TypeGuard
 
 import torch
 import torchgen
@@ -265,7 +266,21 @@ class BaseTorchDispatchMode(TorchDispatchMode):
         return func(*args, **kwargs)
 
 
-def is_traceable_wrapper_subclass(t):
+# Subtypes which have __tensor_flatten__ and __tensor_unflatten__.
+class TensorWithFlatten(Protocol):
+    def __tensor_flatten__(self) -> Tuple[Sequence[str], object]:
+        ...
+
+    @staticmethod
+    def __tensor_unflatten__(inner_tensors: int, flatten_spec: int, outer_size: int, outer_stride: int) -> torch.Tensor:
+        ...
+
+    # It would be really nice to be able to say that the return of
+    # is_traceable_wrapper_subclass() is Intersection[torch.Tensor,
+    # TensorWithFlatten] - but that doesn't exist.
+
+
+def is_traceable_wrapper_subclass(t: object) -> TypeGuard[TensorWithFlatten]:
     """
     Returns whether or not a tensor subclass that implements __torch_dispatch__
     is 'traceable' with torch.compile.

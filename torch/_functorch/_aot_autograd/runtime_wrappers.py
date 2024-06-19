@@ -11,7 +11,7 @@ import pprint
 from contextlib import nullcontext
 from dataclasses import dataclass, field
 from functools import wraps
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, cast, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.utils.dlpack
@@ -1396,7 +1396,7 @@ Expected metadata: {str(expected_tangent_metadata)}
 
 Runtime metadata: {str(runtime_tangent_metadata)}
 
-shape: {str(x.shape)}
+shape: {str(cast(torch.Tensor, x).shape)}
 To fix this, your tensor subclass must implement the dunder method __force_to_same_metadata__.
 """
             )
