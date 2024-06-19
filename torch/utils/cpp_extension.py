@@ -198,12 +198,74 @@ CUDA_NOT_FOUND_MESSAGE = '''
 CUDA was not found on the system, please set the CUDA_HOME or the CUDA_PATH
 environment variable or add NVCC to your system PATH. The extension compilation will fail.
 '''
-ROCM_HOME = _find_rocm_home()
-HIP_HOME = _join_rocm_home('hip') if ROCM_HOME else None
-IS_HIP_EXTENSION = True if ((ROCM_HOME is not None) and (torch.version.hip is not None)) else False
-ROCM_VERSION = None
-if torch.version.hip is not None:
-    ROCM_VERSION = tuple(int(v) for v in torch.version.hip.split('.')[:2])
+from enum import Enum
+class CPUState(Enum):
+    GPU = 0
+    CPU = 1
+    MPS = 2
+
+xpu_available = False
+cpu_state = CPUState.GPU
+directml_enabled = False
+def is_intel_xpu():
+    global cpu_state
+    global xpu_available
+    if cpu_state == CPUState.GPU:
+        if xpu_available:
+            return True
+    return False
+
+def get_torch_device():
+    global directml_enabled
+    global cpu_state
+    if directml_enabled:
+        global directml_device
+        return directml_device
+    if cpu_state == CPUState.MPS:
+        return torch.device("mps")
+    if cpu_state == CPUState.CPU:
+        return torch.device("cpu")
+    else:
+        if is_intel_xpu():
+            return torch.device("xpu", torch.xpu.current_device())
+        else:
+            return torch.device(torch.cuda.current_device())
+        
+def get_torch_device_name(device):
+    if hasattr(device, 'type'):
+        if device.type == "cuda":
+            try:
+                allocator_backend = torch.cuda.get_allocator_backend()
+            except:
+                allocator_backend = ""
+            return "{} {} : {}".format(device, torch.cuda.get_device_name(device), allocator_backend)
+        else:
+            return "{}".format(device.type)
+    elif is_intel_xpu():
+        return "{} {}".format(device, torch.xpu.get_device_name(device))
+    else:
+        return "CUDA {}: {}".format(device, torch.cuda.get_device_name(device))
+
+try:
+    torch_device_name = get_torch_device_name(get_torch_device())
+
+    if "[ZLUDA]" in torch_device_name:
+        print("***--------------------------------ZLUDA------------------------------------***")
+        print("Detected ZLUDA, support for it is experimental and PyTorch may not work properly.")
+
+        ROCM_HOME = None
+        HIP_HOME = None
+        IS_HIP_EXTENSION = False
+        ROCM_VERSION = None
+        torch.version.hip = None
+
+except:
+    ROCM_HOME = _find_rocm_home()
+    HIP_HOME = _join_rocm_home('hip') if ROCM_HOME else None
+    IS_HIP_EXTENSION = True if ((ROCM_HOME is not None) and (torch.version.hip is not None)) else False
+    ROCM_VERSION = None
+    if torch.version.hip is not None:
+        ROCM_VERSION = tuple(int(v) for v in torch.version.hip.split('.')[:2])
 
 CUDA_HOME = _find_cuda_home() if torch.cuda._is_compiled() else None
 CUDNN_HOME = os.environ.get('CUDNN_HOME') or os.environ.get('CUDNN_PATH')
