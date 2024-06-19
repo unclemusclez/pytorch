@@ -14,7 +14,6 @@ import builtins
 import ctypes
 import glob
 import importlib
-import importlib.util
 import inspect
 import math
 import os
@@ -23,23 +22,23 @@ import sys
 import textwrap
 import threading
 from typing import (
-    Any,
-    Callable,
-    Dict,
-    Optional,
-    Set,
-    Tuple,
+    Any as _Any,
+    Callable as _Callable,
+    Dict as _Dict,
+    Optional as _Optional,
+    Set as _Set,
+    Tuple as _Tuple,
     Type as _Type,
-    TYPE_CHECKING,
-    Union,
+    TYPE_CHECKING as _TYPE_CHECKING,
+    Union as _Union,
 )
-from typing_extensions import TypeGuard
+from typing_extensions import TypeGuard as _TypeGuard
 
 
 # multipy/deploy is setting this import before importing torch, this is the most
 # reliable way we have to detect if we're running within deploy.
 # https://github.com/pytorch/multipy/blob/d60f34ad38c371e441fe7ffdb77a3c3dda5a5d19/multipy/runtime/interpreter/interpreter_impl.cpp#L134-L137
-def _running_with_deploy():
+def _running_with_deploy() -> builtins.bool:
     return sys.modules.get("torch._meta_registrations", None) is object
 
 
@@ -143,7 +142,7 @@ assert __all__ == sorted(__all__)
 
 if sys.platform == "win32":
 
-    def _load_dll_libraries():
+    def _load_dll_libraries() -> None:
         import sysconfig
 
         from torch.version import cuda as cuda_version
@@ -258,7 +257,7 @@ if sys.platform == "win32":
     del _load_dll_libraries
 
 
-def _preload_cuda_deps(lib_folder, lib_name):
+def _preload_cuda_deps(lib_folder: str, lib_name: str) -> None:
     """Preloads cuda deps if they could not be found otherwise."""
     # Should only be called on Linux if default path resolution have failed
     assert platform.system() == "Linux", "Should only be called on Linux"
@@ -282,10 +281,15 @@ def _preload_cuda_deps(lib_folder, lib_name):
 
 # See Note [Global dependencies]
 def _load_global_deps() -> None:
+    if _running_with_deploy() or platform.system() == "Windows":
+        return
+
     LIBTORCH_PKG_NAME = "libtorchsplit"
 
-    def find_package_path(package_name):
-        spec = importlib.util.find_spec(package_name)
+    def find_package_path(package_name: str) -> _Optional[str]:
+        from importlib.util import find_spec
+
+        spec = find_spec(package_name)
         if spec:
             # The package might be a namespace package, so get_data may fail
             try:
@@ -297,7 +301,7 @@ def _load_global_deps() -> None:
                 pass
         return None
 
-    def load_shared_libraries(library_path):
+    def load_shared_libraries(library_path: str) -> None:
         lib_dir = os.path.join(library_path, "lib")
         if not os.path.exists(lib_dir):
             return
@@ -313,9 +317,6 @@ def _load_global_deps() -> None:
                 ctypes.CDLL(lib_path, mode=ctypes.RTLD_GLOBAL)
             except OSError as err:
                 print(f"Failed to load {lib_path}: {err}")
-
-    if _running_with_deploy() or platform.system() == "Windows":
-        return
 
     # Determine the file extension based on the platform
     lib_ext = ".dylib" if platform.system() == "Darwin" else ".so"
@@ -333,7 +334,7 @@ def _load_global_deps() -> None:
     except OSError as err:
         # Can only happen for wheel with cuda libs as PYPI deps
         # As PyTorch is not purelib, but nvidia-*-cu12 is
-        cuda_libs: Dict[str, str] = {
+        cuda_libs: _Dict[str, str] = {
             "cublas": "libcublas.so.*[0-9]",
             "cudnn": "libcudnn.so.*[0-9]",
             "cuda_nvrtc": "libnvrtc.so.*[0-9]",
@@ -903,7 +904,7 @@ for __name in dir(_C):
 
 del __name, __obj
 
-if not TYPE_CHECKING:
+if not _TYPE_CHECKING:
     # issue 38137 and python issue 43367. Submodules of a C extension are
     # non-standard, and attributes of those submodules cannot be pickled since
     # pickle expect to be able to import them as "from _C.sub import attr"
@@ -911,7 +912,7 @@ if not TYPE_CHECKING:
     __name, __candidate = "", None
     for __name in dir(_C):
         __candidate = getattr(_C, __name)
-        if type(__candidate) is type(_C):
+        if inspect.ismodule(__candidate):
             # submodule
             sys.modules.setdefault(f"{__name__}._C.{__name}", __candidate)
 
@@ -923,7 +924,7 @@ if not TYPE_CHECKING:
 ################################################################################
 
 
-def typename(obj: Any, /) -> str:
+def typename(obj: _Any, /) -> str:
     """
     String representation of the type of an object.
 
@@ -964,7 +965,7 @@ def typename(obj: Any, /) -> str:
     return f"{module}.{qualname}"
 
 
-def is_tensor(obj: Any, /) -> TypeGuard["torch.Tensor"]:
+def is_tensor(obj: _Any, /) -> _TypeGuard["torch.Tensor"]:
     r"""Returns True if `obj` is a PyTorch tensor.
 
     Note that this function is simply doing ``isinstance(obj, Tensor)``.
@@ -984,7 +985,7 @@ def is_tensor(obj: Any, /) -> TypeGuard["torch.Tensor"]:
     return isinstance(obj, torch.Tensor)
 
 
-def is_storage(obj: Any, /) -> TypeGuard[Union["TypedStorage", "UntypedStorage"]]:
+def is_storage(obj: _Any, /) -> _TypeGuard[_Union["TypedStorage", "UntypedStorage"]]:
     r"""Returns True if `obj` is a PyTorch storage object.
 
     Args:
@@ -1013,7 +1014,7 @@ def get_default_device() -> "torch.device":
 
 
 def set_default_device(
-    device: Optional[Union["torch.device", str, builtins.int]],
+    device: _Optional[_Union["torch.device", str, builtins.int]],
 ) -> None:
     """Sets the default ``torch.Tensor`` to be allocated on ``device``.  This
     does not affect factory function calls which are called with an explicit
@@ -1076,7 +1077,7 @@ def set_default_device(
     _GLOBAL_DEVICE_CONTEXT.device_context = device_context
 
 
-def set_default_tensor_type(t: Union[_Type["torch.Tensor"], str], /) -> None:
+def set_default_tensor_type(t: _Union[_Type["torch.Tensor"], str], /) -> None:
     r"""
     .. warning::
 
@@ -1317,7 +1318,7 @@ def is_deterministic_algorithms_warn_only_enabled() -> builtins.bool:
     return _C._get_deterministic_algorithms_warn_only()
 
 
-def set_deterministic_debug_mode(debug_mode: Union[builtins.int, str]) -> None:
+def set_deterministic_debug_mode(debug_mode: _Union[builtins.int, str]) -> None:
     r"""Sets the debug mode for deterministic operations.
 
     .. note:: This is an alternative interface for
@@ -1479,8 +1480,8 @@ def is_warn_always_enabled() -> builtins.bool:
 
 def _check_with(
     error_type,
-    cond: Union[builtins.bool, SymBool],
-    message: Callable[[], str],
+    cond: _Union[builtins.bool, SymBool],
+    message: _Callable[[], str],
 ):  # noqa: F811
     if not isinstance(cond, (builtins.bool, SymBool)):
         raise TypeError(f"cond must be a bool, but got {type(cond)}")
@@ -1865,7 +1866,7 @@ class QUInt2x4Storage(_LegacyStorage):
         return torch.quint2x4
 
 
-_storage_classes: Set[_Type[Union[TypedStorage, UntypedStorage]]] = {
+_storage_classes: _Set[_Type[_Union[TypedStorage, UntypedStorage]]] = {
     UntypedStorage,
     DoubleStorage,
     FloatStorage,
@@ -1888,7 +1889,7 @@ _storage_classes: Set[_Type[Union[TypedStorage, UntypedStorage]]] = {
 }
 
 # The _tensor_classes set is initialized by the call to initialize_python_bindings.
-_tensor_classes: Set[_Type["torch.Tensor"]] = set()
+_tensor_classes: _Set[_Type["torch.Tensor"]] = set()
 
 # If you edit these imports, please update torch/__init__.py.in as well
 from torch import amp as amp, random as random, serialization as serialization
@@ -1921,7 +1922,7 @@ del _manager_path
 # Note that we will see "too many" functions when reexporting this way; there
 # is not a good way to fix this problem.  Perhaps, try to redesign VariableFunctions
 # so that this import is good enough
-if TYPE_CHECKING:
+if _TYPE_CHECKING:
     # Some type signatures pulled in from _VariableFunctions here clash with
     # signatures already imported. For now these clashes are ignored; see
     # PR #43339 for details.
@@ -2127,7 +2128,7 @@ class _TorchCompileInductorWrapper:
     compiler_name = "inductor"
 
     def __init__(self, mode, options, dynamic):
-        self.config: Dict[str, Any] = dict()
+        self.config: _Dict[str, _Any] = dict()
         self.dynamic = dynamic
         self.apply_mode(mode)
         self.apply_options(options)
@@ -2151,7 +2152,7 @@ class _TorchCompileInductorWrapper:
             and self.dynamic == other.dynamic
         )
 
-    def apply_mode(self, mode: Optional[str]):
+    def apply_mode(self, mode: _Optional[str]):
         if mode is None or mode == "default":
             pass
         elif mode in {"reduce-overhead", "max-autotune", "max-autotune-no-cudagraphs"}:
@@ -2163,13 +2164,13 @@ class _TorchCompileInductorWrapper:
                 f"Unrecognized mode={mode}, should be one of: default, reduce-overhead, max-autotune, max-autotune-no-cudagraphs"
             )
 
-    def apply_options(self, options: Optional[Dict[str, Any]]):
+    def apply_options(self, options: _Optional[_Dict[str, _Any]]):
         if not options:
             return
 
         from torch._inductor import config
 
-        current_config: Dict[str, Any] = config.shallow_copy_dict()
+        current_config: _Dict[str, _Any] = config.shallow_copy_dict()
 
         for key, val in options.items():
             attr_name = key.replace("-", "_")
@@ -2241,15 +2242,15 @@ class _TorchCompileWrapper:
 
 
 def compile(
-    model: Optional[Callable] = None,
+    model: _Optional[_Callable] = None,
     *,
     fullgraph: builtins.bool = False,
-    dynamic: Optional[builtins.bool] = None,
-    backend: Union[str, Callable] = "inductor",
-    mode: Union[str, None] = None,
-    options: Optional[Dict[str, Union[str, builtins.int, builtins.bool]]] = None,
+    dynamic: _Optional[builtins.bool] = None,
+    backend: _Union[str, _Callable] = "inductor",
+    mode: _Union[str, None] = None,
+    options: _Optional[_Dict[str, _Union[str, builtins.int, builtins.bool]]] = None,
     disable: builtins.bool = False,
-) -> Callable:
+) -> _Callable:
     """
     Optimizes given model/function using TorchDynamo and specified backend.
     If you are compiling an :class:`torch.nn.Module`, you can also use :meth:`torch.nn.Module.compile`
@@ -2341,7 +2342,7 @@ def compile(
     # Decorator mode
     if model is None:
 
-        def fn(model: Callable):
+        def fn(model: _Callable):
             if model is None:
                 raise RuntimeError("Model can't be None")
             return compile(
@@ -2377,7 +2378,7 @@ def compile(
 
 from torch import export as export
 
-from torch._higher_order_ops import cond, while_loop
+from torch._higher_order_ops import cond as cond, while_loop as while_loop
 
 
 def _register_device_module(device_type, module):
@@ -2403,7 +2404,7 @@ def _register_device_module(device_type, module):
 # expose return_types
 from torch import library as library, return_types as return_types
 
-if not TYPE_CHECKING:
+if not _TYPE_CHECKING:
     from torch import _meta_registrations
 
 # Enable CUDA Sanitizer
@@ -2427,7 +2428,7 @@ if not _running_with_deploy():
 
     class _TritonLibrary:
         lib = torch.library.Library("triton", "DEF")
-        ops_table: Dict[Tuple[str, str], Callable] = {}
+        ops_table: _Dict[_Tuple[str, str], _Callable] = {}
 
         @classmethod
         def registerOp(cls, op_key, full_schema, op_impl, dispatch_key):
@@ -2447,7 +2448,7 @@ _deprecated_attrs = {
     "has_mkldnn": torch.backends.mkldnn.is_available,
 }
 
-if TYPE_CHECKING:
+if _TYPE_CHECKING:
     # Import the following modules during type checking to enable code intelligence features,
     # such as auto-completion in tools like pylance, even when these modules are not explicitly
     # imported in user code.
@@ -2481,7 +2482,7 @@ else:
         raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
 
 
-def get_device_module(device: Optional[Union[torch.device, str]] = None):
+def get_device_module(device: _Optional[_Union[torch.device, str]] = None):
     """
     Returns the module associated with a given device(e.g., torch.device('cuda'), "mtia:0", "xpu", ...).
     If no device is given, return the module for the current accelerator or CPU if none is present.
@@ -2507,8 +2508,8 @@ def get_device_module(device: Optional[Union[torch.device, str]] = None):
 
 def _constrain_as_size(
     symbol,
-    min: Optional[builtins.int] = None,
-    max: Optional[builtins.int] = None,
+    min: _Optional[builtins.int] = None,
+    max: _Optional[builtins.int] = None,
 ):
     """
     This indicates that a given int is size-like, and can be used in any context where a size is expected.
