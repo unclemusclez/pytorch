@@ -22,6 +22,7 @@ import platform
 import sys
 import textwrap
 import threading
+from dataclasses import dataclass
 from typing import Any, Callable, Dict, Optional, Set, Tuple, Type, TYPE_CHECKING, Union
 
 if TYPE_CHECKING:
@@ -714,6 +715,33 @@ class SymBool:
             return hash(self.node.bool_())
         else:
             raise TypeError("unhashable type: SymBool")
+
+
+@dataclass
+class _SymExprHash:
+    """
+    Hash for a py_sym_types that will use the underlying sympy expression
+    """
+
+    sym_obj: Union[SymInt, SymFloat, SymBool]
+
+    def __hash__(self) -> builtins.int:
+        return hash(
+            (
+                type(self.sym_obj),
+                self.sym_obj.node.expr,
+                id(self.sym_obj.node.shape_env),
+            )
+        )
+
+    def __eq__(self, value) -> builtins.bool:
+        if not isinstance(value, _SymExprHash):
+            return False
+        self_node = self.sym_obj.node
+        value_node = value.sym_obj.node
+        return self_node.expr == value_node.expr and id(self_node.shape_env) == id(
+            value_node.shape_env
+        )
 
 
 def sym_not(a):
