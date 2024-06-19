@@ -217,7 +217,7 @@ class TORCH_API Context {
   at::LinalgBackend linalgPreferredBackend() const;
   void setLinalgPreferredBackend(at::LinalgBackend);
 
-  at::BlasBackend blasPreferredBackend() const;
+  at::BlasBackend blasPreferredBackend();
   void setBlasPreferredBackend(at::BlasBackend);
 
   // Note [Enabling Deterministic Operations]
@@ -389,8 +389,6 @@ class TORCH_API Context {
        c10::utils::check_env("TORCH_BLAS_PREFER_HIPBLASLT") == true)
       ? at::BlasBackend::Cublaslt
       : at::BlasBackend::Cublas;
-
-
 #ifdef C10_MOBILE
   bool release_original_weights = true;
 #else
